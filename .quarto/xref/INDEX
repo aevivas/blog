@@ -1,0 +1,29 @@
+{
+  "posts/post-with-code/index.qmd": {
+    "index.html": "feea7895"
+  },
+  "posts/welcome/index.qmd": {
+    "index.html": "c0ed5c35"
+  },
+  "index.qmd": {
+    "index.html": "1b58c1c9"
+  },
+  "about.qmd": {
+    "about.html": "258af468"
+  },
+  "lambda-deployments-type.qmd": {
+    "lambda-deployments-type.html": "4c562245"
+  },
+  "lambda-deployment-types.qmd": {
+    "lambda-deployment-types.html": "43a38912"
+  },
+  "posts/lambda-deployment-types.qmd": {
+    "lambda-deployment-types.html": "a502bc42"
+  },
+  "posts/lambda-deployment-types/page.qmd": {
+    "page.html": "5a1ffb55"
+  },
+  "posts/lambda-deployment-types/index.qmd": {
+    "index.html": "f686a826"
+  }
+}

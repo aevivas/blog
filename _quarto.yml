@@ -1,0 +1,18 @@
+project:
+  type: website
+
+website:
+  title: "Experience Working with AWS Lambda Functions and Terraform"
+  navbar:
+    right:
+      - about.qmd
+      - icon: github
+        href: https://github.com/aevivas/
+format:
+  html:
+    theme: cosmo
+    css: styles.css
+    toc: true
+
+
+

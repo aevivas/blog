@@ -1,0 +1,156 @@
+---
+title: "Different strategies for AWS Lambdas deployments with Terraform"
+author: "Antonio"
+date: "2023-10-04"
+categories: [tf, code, lambda, aws]
+---
+
+You have done several AWS Lambda deployments using Terraform (TF), and you are starting to do deployments in AWS using Terraform Cloud (TFC). Because you know there will be more Lambda deployments soon, you want to be proactive, think strategically, and implement a workflow to sustain your future workload, provide resilience, and leave room for integrations with other technologies.
+
+When I started with Lambda deployments, I quickly jumped on deployment after deployment without too much thought into the future; there was a sense of urgency in migrating IT services to the cloud ASAP. I wished I had slowed down and planned better in architecting all moving parts and their interactions. If I had put some thought in, it would have prevented me from several refactors to address old deployments' inherent limitations.
+
+I will list some approaches I used for lambda deployments and how they evolved to overcome the limitations I encountered.
+
+# All in One: Deployment Package included with the TF Configuration Files
+
+This approach is the simplest, and everybody follows it while learning lambda to use the tool. The *aws_lambda_function* terraform stanza in *main.tf* file does not look complicated, and it is easy to follow what TF will do. The code should look similar to the example below (I am going to be minimalistic, showing only the relevant arguments in every instance):
+
+```default
+resource "aws_lambda_function" "this" { 
+    ...
+    function_name    = "lambda_name"
+    filename         = "deployment_package.zip" 
+    source_code_hash = filebase64sha256("deployment_package.zip")
+    runtime          = "python3.11"
+    ...
+}
+```
+
+Despite being a common approach, it has several limitations. You need to include in the repository the deployment package, which is a ZIP file. It is not entirely bad, but it is not recommended. Storing compressed binary code in the PR can make the approval process unreliable. Approvers will check the source code and trust that the ZIP file was properly created. (If you are tracking the source code elsewhere, then a PR for the ZIP is useless.)
+
+# Leveraging the *archive* Provider to Create the Deployment Package
+
+One way to not need the deployment package in the repository is with the archive provider. What this provider does is TFC will create the deployment package during the apply. This simplifies the PRs because it contains source code that approvers can check. In the main.tf, you must add the archive_file data source and modify the aws_lambda_function resource to reference the relevant archive_file attributes. The configuration file should look like this:
+
+``` default
+resource "aws_lambda_function" "this" { 
+    ...
+    filename         = data.archive_file.demo_lambda_zip.output_path 
+    source_code_hash = data.archive_file.this.output_base64sha256 
+    ...
+}
+```
+
+and
+
+``` default
+data "archive_file" "this" { 
+    ...
+    type        = "zip" 
+    source_file = "${path.module}/src/application.py"  
+    output_path = "${path.module}/zip/deployment_package.zip" 
+    ...
+}
+```
+
+Using the archive provider addressed your previous issue of not needing to include the deployment package in the repository. Unfortunately, it does not offer a good advantage if the lambda requires dependencies, and the most common dependencies I have seen for lambda deployments are *requests* and *boto3*. If you decide to add the dependencies with the source code, the pull request will contain too many files, making the approvers' job more difficult and running limitations of the version control GUI to list all the changes.
+
+# Storing the Deployment Package in a S3 Bucket
+
+The other option for uploading the deployment package into the AWS Lambda service is a S3 bucket. The S3 bucket stores the deployment package, and you configure the corresponding arguments in the aws_s3_bucket resource to use the bucket.
+
+Create the bucket in a separate terraform deployment if you include the aws_s3_bucket resource and the rest of the resources in the main.tf, you will run into drifting again.
+
+``` default
+resource "aws_lambda_function" "lambda" { 
+    ...
+    s3_bucket        = "bucket-deployment-package-lambda" 
+    s3_key           = "deployment_package.zip" 
+    source_code_hash = base64sha256(file("deployment_package.zip")) 
+    ... 
+}
+```
+
+I prefer using the *aws_s3_object* data source instead to take advantage of its arguments; thus, the code looks more like this:
+
+``` default
+resource "aws_lambda_function" "lambda" { 
+    ...
+    s3_bucket        = data.aws_s3_object.lambda.bucket 
+    s3_key           = data.aws_s3_object.lambda.key 
+    source_code_hash = data.aws_s3_object.lambda.etag
+    ... 
+}
+```
+
+``` default
+data "aws_s3_object" "lambda" { 
+    ...
+    bucket = "bucket-deployment-package-lambda" 
+    key    = "deployment_package.zip"
+    ...
+}
+```
+
+This approach separates the lambda code from the terraform configuration files. Now, it is easier to develop automation for the lambda code that does not conflict with Terraform Cloud workflow.
+
+# Working with S3 Buckets Encryption
+
+My success was short-lived for the reason that I overlooked encrypting the bucket. The side effect of an encrypted bucket is the etag attribute fails because the MD5 function can no longer access the file's content. Luckily, the change is trivial and only requires replacing this argument with *s3_object_version*; versioning must also be enabled.
+
+``` default
+resource "aws_lambda_function" "lambda" { 
+    ...
+    s3_bucket         = data.aws_s3_object.lambda.bucket 
+    s3_key            = data.aws_s3_object.lambda.key 
+    s3_object_version = data.aws_s3_object.lambda.version_id 
+    ... 
+}
+```
+
+# Using Lambda Layers to the Deployment
+
+You probably already saw the following message when you tried to view the Lambda console code editor: *The deployment package of your Lambda function REDACTED is too large to enable inline code editing...* The most probable culprits are the dependencies making the deployment package larger than 3MB. It is acceptable to leave the lambda as it is; however, having access to the source code is convenient for quick troubleshooting.
+
+Using lambda layers can provide some help. Instead of bundling the lambda code with dependencies, you can create two deployment packages: one for the lambda code and the other for your lambda layer. Both can be stored in the same S3 bucket if preferred.
+
+First, I add the *aws_lambda_layer_version resource* to the *main.tf* to create the layer:
+
+``` default
+resource "aws_lambda_layer_version" "layer" {
+    ...
+    layer_name          = "lambda_layer_name"
+    s3_bucket           = data.aws_s3_object.layer.bucket
+    s3_key              = data.aws_s3_object.layer.key
+    s3_object_version   = data.aws_s3_object.layer.version_id
+    compatible_runtimes = ["python3.11"]
+    ...
+}
+```
+
+``` default
+data "aws_s3_object" "layer" {
+    ...
+    bucket = "bucket-deployment-package-lambda"
+    key    = "layer_deployment_package.zip"
+    ...
+}
+```
+
+Then, I changed the *aws_lambda_function* resource to include a reference to the layer.
+
+``` default
+resource "aws_lambda_function" "lambda" {
+    ...
+    layers = [aws_lambda_layer_version.layer.arn]
+    ...
+}
+```
+
+Aside from the extra complexity and developing time, lambda layers bring benefits. It reduces the size of your deployment packages, separates core function logic from dependencies, shares dependencies, and allows using the Lambda console code editor.
+
+You must note that you can manage independent pipelines for each component: terraform configuration files, lambda code, and dependencies. There is no need to create a one-size-fits-all-convoluted pipeline for a deployment. The test scripts can be more straightforward, and testing should be faster since you only need to check the item changed instead of the entire deployment.
+
+# In the end...
+
+Ultimately, you and your team must evaluate and decide on a strategy that fits appropriately your environment based on workflow, toolings, knowledge, etc. My goal here is list and comment on the approaches I have worked with.

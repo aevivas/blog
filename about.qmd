@@ -1,0 +1,16 @@
+---
+title: "About"
+image: photo.jpeg
+about:
+  template: jolla
+  links:
+    - icon: github
+      text: Github
+      href: https://github.com/aevivas/
+
+---
+
+Antonio
+(He/Him/His)
+
+Deploying and managing IT services in AWS | Project Manager | Cloud Architect (Networking) | Infrastructure as Code
